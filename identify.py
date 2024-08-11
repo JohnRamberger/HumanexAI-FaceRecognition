@@ -4,16 +4,18 @@ from mtcnn import MTCNN
 from tensorflow.keras.models import load_model
 from sklearn.preprocessing import Normalizer, LabelEncoder
 from sklearn.svm import SVC
+from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
+import os
 
 # Load face detection model
 detector = MTCNN()
 
 # Load face recognition model
-facenet_model = load_model('/home/jawabreh/Desktop/HumaneX/face-recognition/facenet_keras.h5')
+facenet_model = load_model('./facenet_keras.h5')
 
 # Load face embeddings
-data = np.load('/home/jawabreh/Desktop/supervisor-meeting/face-recognition/embeddings/unmasked-embeddings.npz')
+data = np.load('./embeddings/unmasked-embeddings.npz')
 trainX, trainy = data['arr_0'], data['arr_1']
 
 # Normalize input vectors
@@ -54,56 +56,131 @@ def extract_face_embeddings(image):
     embeddings = facenet_model.predict(face)
     return embeddings[0]
 
-# Define function to identify the identity of an input image
-def identify_person(image):
-    # Extract face embeddings from input image
-    embeddings = extract_face_embeddings(image)
-    if embeddings is None:
-        return None, None
-    # Normalize embeddings
-    embeddings = in_encoder.transform([embeddings])
-    # Predict the identity and confidence using SVM classifier
-    prediction = model.predict(embeddings)
-    confidence = model.predict_proba(embeddings)[0][prediction] * 100
-    prediction = out_encoder.inverse_transform(prediction)
-    return prediction[0].item(), confidence
+def reduce_features(embeddings, n_components=2):
+    # Reduce the dimensionality of the embeddings
+    # Embeddings is 1d array of shape (1, 128)
+    pca = PCA(n_components=n_components)
+    pca.fit(trainX)
+    embeddings = pca.transform(embeddings)
+    return embeddings
 
-# Define function to identify the identity and confidence of an input image
-def identify_person_with_unknown(image, threshold=0.9):
+def normalize_embeddings(embeddings):
+    # Normalize the embeddings
+    embeddings = in_encoder.transform([embeddings])
+    return embeddings
+
+def get_new_embeddings(image):
     # Extract face embeddings from input image
     embeddings = extract_face_embeddings(image)
     if embeddings is None:
-        return None, None
+        return None
     # Normalize embeddings
-    embeddings = in_encoder.transform([embeddings])
-    # Predict the identity and confidence using SVM classifier
-    predictions = model.predict_proba(embeddings)[0]
-    max_idx = np.argmax(predictions)
-    if predictions[max_idx] >= threshold:
-        prediction = out_encoder.inverse_transform([max_idx])
-        confidence = predictions[max_idx] * 100
-        return prediction[0].item(), confidence
-    else:
-        return "unknown", None
+    embeddings = normalize_embeddings(embeddings)
+    # Reduce the dimensionality of the embeddings
+    embeddings = reduce_features(embeddings)
+    return embeddings
+
+# # Define function to identify the identity of an input image
+# def identify_person(image):
+#     # Extract face embeddings from input image
+#     embeddings = extract_face_embeddings(image)
+#     if embeddings is None:
+#         return None, None
+#     # Normalize embeddings
+#     embeddings = in_encoder.transform([embeddings])
+#     # Predict the identity and confidence using SVM classifier
+#     prediction = model.predict(embeddings)
+#     confidence = model.predict_proba(embeddings)[0][prediction] * 100
+#     prediction = out_encoder.inverse_transform(prediction)
+#     return prediction[0].item(), confidence
+
+# # Define function to identify the identity and confidence of an input image
+# def identify_person_with_unknown(image, threshold=0.9):
+#     # Extract face embeddings from input image
+#     embeddings = extract_face_embeddings(image)
+#     if embeddings is None:
+#         return None, None
+#     # Normalize embeddings
+#     embeddings = in_encoder.transform([embeddings])
+    
+#     print(embeddings)
+    
+#     # Predict the identity and confidence using SVM classifier
+#     predictions = model.predict_proba(embeddings)[0]
+#     max_idx = np.argmax(predictions)
+#     if predictions[max_idx] >= threshold:
+#         prediction = out_encoder.inverse_transform([max_idx])
+#         confidence = predictions[max_idx] * 100
+#         return prediction[0].item(), confidence
+#     else:
+#         return "unknown", None
 
 # Example usage
-image = cv2.imread('/home/jawabreh/Desktop/supervisor-meeting /face-recognition/data/val/ahmad/1.jpeg')
+# read image names in the folder
 
-person, confidence = identify_person_with_unknown(image)
-if person is None:
-    print('No face detected in the input image!')
-elif person == "unknown":
-    text = "Unknown person"
-    plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-    plt.title(text)
-    plt.axis('off')
-    plt.show()
-else:
-    # Display the predicted name and confidence probability
-    text = f'Predicted: {str(person)} ({confidence:.2f}%)'
-    print(text)
-    plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-    plt.title(text)
-    plt.axis('on')
-    plt.show()
+IMAGE_DIR = 'images/69000'
+image_names = os.listdir(IMAGE_DIR)
+
+pos = {}
+
+for image_name in image_names:
+    image = cv2.imread(os.path.join(IMAGE_DIR, image_name))
+    embeddings = get_new_embeddings(image)
+    if embeddings is None:
+        print(f'No face detected in {image_name}!')
+    else:
+        pos[image_name] = embeddings.flatten()
+        # Display the input image
+        
+# pick a random image to display
+image_name = image_names[0]
+image = cv2.imread(os.path.join(IMAGE_DIR, image_name))
+plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+plt.title(image_name)
+
+# find the most similar image to the selected image
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.metrics.pairwise import euclidean_distances
+
+# calculate the cosine similarity between the selected image and all other images
+similarities = {}
+for image, embedding in pos.items():
+    similarity = cosine_similarity([pos[image]], [pos[image_name]])[0][0]
+    similarities[image] = similarity
+    
+# sort the similarities
+similarities = dict(sorted(similarities.items(), key=lambda item: item[1], reverse=True))
+
+# display the most similar image
+most_similar_image_name = list(similarities.keys())[1]
+most_similar_image = cv2.imread(os.path.join(IMAGE_DIR, most_similar_image_name))
+plt.imshow(cv2.cvtColor(most_similar_image, cv2.COLOR_BGR2RGB))
+plt.title(most_similar_image_name)
+
+# plot all points in the embeddings with the image included
+# for image, embedding in pos.items():
+#     plt.scatter(embedding[0], embedding[1], label=image)
+#     plt.annotate(image, (embedding[0], embedding[1]))
+# # plt.legend()
+# plt.show()
+
+
+
+# person, confidence = identify_person_with_unknown(image)
+# if person is None:
+#     print('No face detected in the input image!')
+# elif person == "unknown":
+#     text = "Unknown person"
+#     plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+#     plt.title(text)
+#     plt.axis('off')
+#     plt.show()
+# else:
+#     # Display the predicted name and confidence probability
+#     text = f'Predicted: {str(person)} ({confidence:.2f}%)'
+#     print(text)
+#     plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+#     plt.title(text)
+#     plt.axis('on')
+#     plt.show()
 

@@ -6,4 +6,4 @@ scikit-learn
 keras
 keras.models
 simple_image_download
-
+tensorflow-gpu
